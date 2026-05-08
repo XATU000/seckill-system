@@ -1,5 +1,6 @@
 package com.luqiang.seckill.controller;
 
+import com.luqiang.seckill.common.ApiResponse;
 import com.luqiang.seckill.entity.Goods;
 import com.luqiang.seckill.service.GoodsService;
 import org.springframework.web.bind.annotation.*;
@@ -18,7 +19,8 @@ public class GoodsController {
     }
 
     @GetMapping("/list")
-    public List<Goods> list() {
-        return goodsService.listGoods();
+    public ApiResponse<List<Goods>> list() {
+        List<Goods> goods = goodsService.listGoods();
+        return ApiResponse.success("查询成功", goods);
     }
 }

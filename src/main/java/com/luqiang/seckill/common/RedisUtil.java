@@ -26,6 +26,10 @@ public class RedisUtil {
         return redisTemplate.opsForValue().get(key);
     }
 
+    public Boolean setIfAbsent(String key, String value, long timeoutSeconds) {
+        return redisTemplate.opsForValue().setIfAbsent(key, value, timeoutSeconds, TimeUnit.SECONDS);
+    }
+
     public Boolean delete(String key) {
         return redisTemplate.delete(key);
     }
