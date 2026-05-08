@@ -1,53 +1,77 @@
 package com.luqiang.seckill.controller;
 
+import com.luqiang.seckill.common.ApiResponse;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Arrays;
+
 @RestController
+@Validated
 @RequestMapping("/seckill")
 public class SeckillController {
 
     private final StringRedisTemplate redisTemplate;
+    private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
 
-    public SeckillController(StringRedisTemplate redisTemplate) {
-        this.redisTemplate = redisTemplate;
-    }
-
-    @GetMapping("/do/{id}")
-    public String doSeckill(@PathVariable Long id,
-                            @RequestParam String userId) {
-
-        String stockKey = "stock:" + id;
-        String orderKey = "order:" + id;
-
-        String lua =
+    static {
+        SECKILL_SCRIPT = new DefaultRedisScript<>();
+        SECKILL_SCRIPT.setResultType(Long.class);
+        SECKILL_SCRIPT.setScriptText(
                 "if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then return 2 end;" +
                         "local stock = redis.call('GET', KEYS[1]);" +
                         "if (not stock) then return -1 end;" +
                         "if (tonumber(stock) <= 0) then return 0 end;" +
                         "redis.call('DECR', KEYS[1]);" +
                         "redis.call('SADD', KEYS[2], ARGV[1]);" +
-                        "return 1;";
+                        "return 1;"
+        );
+    }
+
+    public SeckillController(StringRedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
+
+    @GetMapping("/do/{id}")
+    public ApiResponse<Void> doSeckill(@PathVariable Long id,
+                                       @RequestParam @NotBlank(message = "userId不能为空") String userId) {
+        return executeSeckill(id, userId);
+    }
+
+    @PostMapping("/do/{id}")
+    public ApiResponse<Void> doSeckillPost(@PathVariable Long id,
+                                           @RequestParam @NotBlank(message = "userId不能为空") String userId) {
+        return executeSeckill(id, userId);
+    }
+
+    private ApiResponse<Void> executeSeckill(Long id, String userId) {
+        String stockKey = "stock:" + id;
+        String orderKey = "order:" + id;
 
         Long result = redisTemplate.execute(
-                new org.springframework.data.redis.core.script.DefaultRedisScript<>(lua, Long.class),
-                java.util.Arrays.asList(stockKey, orderKey),
+                SECKILL_SCRIPT,
+                Arrays.asList(stockKey, orderKey),
                 userId
         );
 
-        if (result == null) return "系统异常";
+        if (result == null) {
+            return ApiResponse.fail(-2, "系统异常");
+        }
 
         switch (result.intValue()) {
             case 1:
-                return "✅ 秒杀成功";
+                return ApiResponse.success("秒杀成功", null);
             case 0:
-                return "❌ 库存不足";
+                return ApiResponse.fail(0, "库存不足");
             case 2:
-                return "❌ 你已经抢过了";
+                return ApiResponse.fail(2, "你已经抢过了");
             case -1:
-                return "❌ 商品不存在";
+                return ApiResponse.fail(-1, "商品不存在");
             default:
-                return "❌ 未知错误";
+                return ApiResponse.fail(-3, "未知错误");
         }
     }
 }
