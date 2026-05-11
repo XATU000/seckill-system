@@ -1,9 +1,12 @@
 package com.luqiang.seckill.controller;
 
 import com.luqiang.seckill.common.ApiResponse;
+import com.luqiang.seckill.entity.OrderInfo;
+import com.luqiang.seckill.repository.OrderInfoRepository;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +18,7 @@ import java.util.Arrays;
 public class SeckillController {
 
     private final StringRedisTemplate redisTemplate;
+    private final OrderInfoRepository orderInfoRepository;
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
 
     static {
@@ -31,8 +35,10 @@ public class SeckillController {
         );
     }
 
-    public SeckillController(StringRedisTemplate redisTemplate) {
+    public SeckillController(StringRedisTemplate redisTemplate,
+                             OrderInfoRepository orderInfoRepository) {
         this.redisTemplate = redisTemplate;
+        this.orderInfoRepository = orderInfoRepository;
     }
 
     @GetMapping("/do/{id}")
@@ -63,6 +69,7 @@ public class SeckillController {
 
         switch (result.intValue()) {
             case 1:
+                persistOrder(id, userId);
                 return ApiResponse.success("秒杀成功", null);
             case 0:
                 return ApiResponse.fail(0, "库存不足");
@@ -73,5 +80,10 @@ public class SeckillController {
             default:
                 return ApiResponse.fail(-3, "未知错误");
         }
+    }
+
+    @Transactional
+    void persistOrder(Long goodsId, String userId) {
+        orderInfoRepository.save(new OrderInfo(goodsId, userId));
     }
 }
