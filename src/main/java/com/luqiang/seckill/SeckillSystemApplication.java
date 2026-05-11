@@ -3,7 +3,8 @@ package com.luqiang.seckill;
 import com.luqiang.seckill.entity.Goods;
 import com.luqiang.seckill.mapper.GoodsMapper;
 import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -17,9 +18,13 @@ import java.util.List;
 @MapperScan("com.luqiang.seckill.mapper")
 @SpringBootApplication
 public class SeckillSystemApplication {
+    private static final Logger log = LoggerFactory.getLogger(SeckillSystemApplication.class);
 
-    @Autowired
-    private GoodsMapper goodsMapper;
+    private final GoodsMapper goodsMapper;
+
+    public SeckillSystemApplication(GoodsMapper goodsMapper) {
+        this.goodsMapper = goodsMapper;
+    }
 
     public static void main(String[] args) {
         SpringApplication.run(SeckillSystemApplication.class, args);
@@ -28,15 +33,15 @@ public class SeckillSystemApplication {
     @Bean
     public CommandLineRunner checkDatabase(DataSource dataSource) {
         return args -> {
-            System.out.println( "========== 数据库连接检测开始 ==========");
+            log.info("========== 数据库连接检测开始 ==========");
 
             try (Connection conn = dataSource.getConnection()) {
-                System.out.println("✅ 数据库连接成功！");
-                System.out.println("URL: " + conn.getMetaData().getURL());
-                System.out.println("User: " + conn.getMetaData().getUserName());
+                log.info("数据库连接成功");
+                log.info("URL: {}", conn.getMetaData().getURL());
+                log.info("User: {}", conn.getMetaData().getUserName());
             }
 
-            System.out.println("========== 数据库连接检测结束 ==========");
+            log.info("========== 数据库连接检测结束 ==========");
         };
     }
 
@@ -44,7 +49,7 @@ public class SeckillSystemApplication {
     public CommandLineRunner initStock(StringRedisTemplate redisTemplate) {
         return args -> {
 
-            System.out.println("========== Redis库存初始化开始 ==========");
+            log.info("========== Redis库存初始化开始 ==========");
 
             List<Goods> list = goodsMapper.findAll();
 
@@ -55,11 +60,10 @@ public class SeckillSystemApplication {
                 redisTemplate.opsForValue()
                         .set(key, String.valueOf(g.getStock()));
 
-                System.out.println("初始化商品：" + g.getId()
-                        + " 库存：" + g.getStock());
+                log.info("初始化商品: {} 库存: {}", g.getId(), g.getStock());
             }
 
-            System.out.println("========== Redis库存初始化完成 ==========");
+            log.info("========== Redis库存初始化完成 ==========");
         };
     }
 }
