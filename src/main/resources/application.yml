@@ -6,7 +6,7 @@ spring:
     name: seckill-system
 
   datasource:
-    url: jdbc:mysql://192.168.64.2:3306/seckill?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://192.168.64.2:3306/seckill?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -16,6 +16,14 @@ spring:
       host: 192.168.64.2   # ⚠️ 改成和 MySQL 一样
       port: 6379
       timeout: 2000
+
+  sql:
+    init:
+      mode: always
+
+  jpa:
+    hibernate:
+      ddl-auto: update
 
   jackson:
     time-zone: Asia/Shanghai

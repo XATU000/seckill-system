@@ -11,5 +11,5 @@ CREATE TABLE IF NOT EXISTS seckill_order (
     user_id VARCHAR(64) NOT NULL,
     create_time DATETIME NOT NULL,
     INDEX idx_goods_id (goods_id),
-    INDEX idx_user_id (user_id)
+    UNIQUE KEY uk_goods_user (goods_id, user_id)
 );

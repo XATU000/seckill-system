@@ -1,22 +1,16 @@
 package com.luqiang.seckill.service.impl;
 
 import com.luqiang.seckill.common.ApiResponse;
-import com.luqiang.seckill.entity.OrderInfo;
-import com.luqiang.seckill.repository.OrderInfoRepository;
+import com.luqiang.seckill.service.OrderQueueService;
 import com.luqiang.seckill.service.SeckillService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Arrays;
 
 @Service
 public class SeckillServiceImpl implements SeckillService {
-
-    private static final Logger log = LoggerFactory.getLogger(SeckillServiceImpl.class);
 
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
     private static final DefaultRedisScript<Long> COMPENSATE_SCRIPT;
@@ -44,12 +38,12 @@ public class SeckillServiceImpl implements SeckillService {
     }
 
     private final StringRedisTemplate redisTemplate;
-    private final OrderInfoRepository orderInfoRepository;
+    private final OrderQueueService orderQueueService;
 
     public SeckillServiceImpl(StringRedisTemplate redisTemplate,
-                              OrderInfoRepository orderInfoRepository) {
+                              OrderQueueService orderQueueService) {
         this.redisTemplate = redisTemplate;
-        this.orderInfoRepository = orderInfoRepository;
+        this.orderQueueService = orderQueueService;
     }
 
     @Override
@@ -69,10 +63,7 @@ public class SeckillServiceImpl implements SeckillService {
 
         switch (result.intValue()) {
             case 1:
-                try {
-                    persistOrder(goodsId, userId);
-                } catch (Exception e) {
-                    log.error("持久化订单失败, goodsId={}, userId={}", goodsId, userId, e);
+                if (!orderQueueService.enqueue(goodsId, userId)) {
                     redisTemplate.execute(
                             COMPENSATE_SCRIPT,
                             Arrays.asList(stockKey, orderKey),
@@ -90,10 +81,5 @@ public class SeckillServiceImpl implements SeckillService {
             default:
                 return ApiResponse.fail(-3, "未知错误");
         }
-    }
-
-    @Transactional
-    void persistOrder(Long goodsId, String userId) {
-        orderInfoRepository.save(new OrderInfo(goodsId, userId));
     }
 }
