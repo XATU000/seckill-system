@@ -25,6 +25,7 @@ public class SeckillServiceImpl implements SeckillService {
                         "if (tonumber(stock) <= 0) then return 0 end;" +
                         "redis.call('DECR', KEYS[1]);" +
                         "redis.call('SADD', KEYS[2], ARGV[1]);" +
+                        "redis.call('EXPIRE', KEYS[2], 7200);" +
                         "return 1;"
         );
 
