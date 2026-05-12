@@ -1,6 +1,8 @@
 package com.luqiang.seckill.service.impl;
 
 import com.luqiang.seckill.common.ApiResponse;
+import com.luqiang.seckill.entity.OrderInfo;
+import com.luqiang.seckill.repository.OrderInfoRepository;
 import com.luqiang.seckill.service.OrderQueueService;
 import com.luqiang.seckill.service.SeckillService;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -8,6 +10,7 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
+import java.util.Optional;
 
 @Service
 public class SeckillServiceImpl implements SeckillService {
@@ -40,11 +43,14 @@ public class SeckillServiceImpl implements SeckillService {
 
     private final StringRedisTemplate redisTemplate;
     private final OrderQueueService orderQueueService;
+    private final OrderInfoRepository orderInfoRepository;
 
     public SeckillServiceImpl(StringRedisTemplate redisTemplate,
-                              OrderQueueService orderQueueService) {
+                              OrderQueueService orderQueueService,
+                              OrderInfoRepository orderInfoRepository) {
         this.redisTemplate = redisTemplate;
         this.orderQueueService = orderQueueService;
+        this.orderInfoRepository = orderInfoRepository;
     }
 
     @Override
@@ -82,5 +88,28 @@ public class SeckillServiceImpl implements SeckillService {
             default:
                 return ApiResponse.fail(-3, "未知错误");
         }
+    }
+
+    @Override
+    public ApiResponse<Integer> getStock(Long goodsId) {
+        String stock = redisTemplate.opsForValue().get("stock:" + goodsId);
+        if (stock == null) {
+            return ApiResponse.fail(-1, "商品不存在");
+        }
+        return ApiResponse.success("查询成功", Integer.parseInt(stock));
+    }
+
+    @Override
+    public ApiResponse<OrderInfo> getResult(Long goodsId, String userId) {
+        Optional<OrderInfo> order = orderInfoRepository.findByGoodsIdAndUserId(goodsId, userId);
+        if (order.isPresent()) {
+            return ApiResponse.success("已抢到", order.get());
+        }
+        // 检查是否在 Redis 已购集合中（已入队但可能尚未落库）
+        Boolean inSet = redisTemplate.opsForSet().isMember("order:" + goodsId, userId);
+        if (Boolean.TRUE.equals(inSet)) {
+            return ApiResponse.fail(3, "订单处理中");
+        }
+        return ApiResponse.fail(4, "未查询到订单");
     }
 }
