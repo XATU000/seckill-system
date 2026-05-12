@@ -39,6 +39,7 @@ public class OrderQueueService {
     public boolean enqueue(Long goodsId, String userId) {
         try {
             redisTemplate.opsForList().leftPush(ORDER_QUEUE_KEY, goodsId + ":" + userId);
+            redisTemplate.expire(ORDER_QUEUE_KEY, 600, java.util.concurrent.TimeUnit.SECONDS);
             return true;
         } catch (Exception e) {
             log.error("订单入队失败, goodsId={}, userId={}", goodsId, userId, e);
@@ -58,6 +59,7 @@ public class OrderQueueService {
 
     public void enqueueRaw(String raw) {
         redisTemplate.opsForList().rightPush(ORDER_QUEUE_KEY, raw);
+        redisTemplate.expire(ORDER_QUEUE_KEY, 600, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     public long queueSize() {
