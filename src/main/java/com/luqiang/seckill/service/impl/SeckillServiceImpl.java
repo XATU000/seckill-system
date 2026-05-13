@@ -1,10 +1,14 @@
 package com.luqiang.seckill.service.impl;
 
 import com.luqiang.seckill.common.ApiResponse;
+import com.luqiang.seckill.entity.Goods;
 import com.luqiang.seckill.entity.OrderInfo;
+import com.luqiang.seckill.repository.GoodsRepository;
 import com.luqiang.seckill.repository.OrderInfoRepository;
 import com.luqiang.seckill.service.OrderQueueService;
 import com.luqiang.seckill.service.SeckillService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -41,16 +45,21 @@ public class SeckillServiceImpl implements SeckillService {
         );
     }
 
+    private static final Logger log = LoggerFactory.getLogger(SeckillServiceImpl.class);
+
     private final StringRedisTemplate redisTemplate;
     private final OrderQueueService orderQueueService;
     private final OrderInfoRepository orderInfoRepository;
+    private final GoodsRepository goodsRepository;
 
     public SeckillServiceImpl(StringRedisTemplate redisTemplate,
                               OrderQueueService orderQueueService,
-                              OrderInfoRepository orderInfoRepository) {
+                              OrderInfoRepository orderInfoRepository,
+                              GoodsRepository goodsRepository) {
         this.redisTemplate = redisTemplate;
         this.orderQueueService = orderQueueService;
         this.orderInfoRepository = orderInfoRepository;
+        this.goodsRepository = goodsRepository;
     }
 
     @Override
@@ -84,7 +93,34 @@ public class SeckillServiceImpl implements SeckillService {
             case 2:
                 return ApiResponse.fail(2, "你已经抢过了");
             case -1:
-                return ApiResponse.fail(-1, "商品不存在");
+                // 库存 key 缺失，尝试从 DB 回源预热，再重试一次
+                if (!warmupStock(goodsId)) {
+                    return ApiResponse.fail(-1, "商品不存在");
+                }
+                result = redisTemplate.execute(
+                        SECKILL_SCRIPT,
+                        Arrays.asList(stockKey, orderKey),
+                        userId
+                );
+                if (result == null) {
+                    return ApiResponse.fail(-2, "系统异常");
+                }
+                // 重试后递归处理结果（仅处理简单情况，避免再次 -1 递归）
+                switch (result.intValue()) {
+                    case 1:
+                        if (!orderQueueService.enqueue(goodsId, userId)) {
+                            redisTemplate.execute(COMPENSATE_SCRIPT,
+                                    Arrays.asList(stockKey, orderKey), userId);
+                            return ApiResponse.fail(-4, "下单失败,请重试");
+                        }
+                        return ApiResponse.success("秒杀成功", null);
+                    case 0:
+                        return ApiResponse.fail(0, "库存不足");
+                    case 2:
+                        return ApiResponse.fail(2, "你已经抢过了");
+                    default:
+                        return ApiResponse.fail(-3, "未知错误");
+                }
             default:
                 return ApiResponse.fail(-3, "未知错误");
         }
@@ -92,9 +128,16 @@ public class SeckillServiceImpl implements SeckillService {
 
     @Override
     public ApiResponse<Integer> getStock(Long goodsId) {
-        String stock = redisTemplate.opsForValue().get("{s:" + goodsId + "}:stock");
+        String key = "{s:" + goodsId + "}:stock";
+        String stock = redisTemplate.opsForValue().get(key);
         if (stock == null) {
-            return ApiResponse.fail(-1, "商品不存在");
+            if (!warmupStock(goodsId)) {
+                return ApiResponse.fail(-1, "商品不存在");
+            }
+            stock = redisTemplate.opsForValue().get(key);
+            if (stock == null) {
+                return ApiResponse.fail(-1, "商品不存在");
+            }
         }
         return ApiResponse.success("查询成功", Integer.parseInt(stock));
     }
@@ -111,5 +154,20 @@ public class SeckillServiceImpl implements SeckillService {
             return ApiResponse.fail(3, "订单处理中");
         }
         return ApiResponse.fail(4, "未查询到订单");
+    }
+
+    /**
+     * 从 DB 加载商品库存到 Redis。成功返回 true，商品不存在返回 false。
+     */
+    private boolean warmupStock(Long goodsId) {
+        Optional<Goods> opt = goodsRepository.findById(goodsId);
+        if (opt.isEmpty()) {
+            return false;
+        }
+        Goods goods = opt.get();
+        String key = "{s:" + goodsId + "}:stock";
+        redisTemplate.opsForValue().set(key, String.valueOf(goods.getStock()));
+        log.info("库存预热: goodsId={} stock={}", goodsId, goods.getStock());
+        return true;
     }
 }
