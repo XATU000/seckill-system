@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>秒杀系统</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  .container { background: #fff; border-radius: 12px; padding: 40px; width: 400px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+  h1 { text-align: center; margin-bottom: 24px; color: #333; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; margin-bottom: 6px; font-size: 14px; color: #666; }
+  .field input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px; outline: none; transition: border-color .2s; }
+  .field input:focus { border-color: #e74c3c; }
+  .btn { width: 100%; padding: 14px; background: #e74c3c; color: #fff; border: none; border-radius: 6px; font-size: 20px; font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s; }
+  .btn:active:not(:disabled) { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .cooldown-bar { height: 4px; background: #eee; border-radius: 2px; margin-top: 8px; overflow: hidden; display: none; }
+  .cooldown-bar.active { display: block; }
+  .cooldown-bar .fill { height: 100%; background: #e74c3c; width: 0%; transition: width 0.1s linear; }
+  .result { margin-top: 16px; padding: 12px; border-radius: 6px; font-size: 14px; text-align: center; display: none; }
+  .result.success { display: block; background: #d4edda; color: #155724; }
+  .result.fail { display: block; background: #f8d7da; color: #721c24; }
+  .result.info { display: block; background: #d1ecf1; color: #0c5460; }
+  .stock { text-align: center; margin-top: 12px; font-size: 14px; color: #999; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>秒杀抢购</h1>
+  <div class="field">
+    <label>商品 ID</label>
+    <input type="number" id="goodsId" value="1" min="1">
+  </div>
+  <div class="field">
+    <label>用户 ID</label>
+    <input type="text" id="userId" placeholder="输入用户ID">
+  </div>
+  <button class="btn" id="seckillBtn" onclick="doSeckill()">立即抢购</button>
+  <div class="cooldown-bar" id="cooldownBar"><div class="fill" id="cooldownFill"></div></div>
+  <div class="result" id="result"></div>
+  <div class="stock" id="stock"></div>
+</div>
+
+<script>
+const DEBOUNCE_MS = 1000;
+
+let cooldownUntil = 0;
+let cooldownTimer = null;
+
+function randomUserId() {
+  return 'user_' + Math.random().toString(36).substring(2, 10);
+}
+
+// init
+document.getElementById('userId').value = randomUserId();
+fetchStock();
+
+function fetchStock() {
+  const goodsId = document.getElementById('goodsId').value;
+  fetch('/seckill/stock/' + goodsId)
+    .then(r => r.json())
+    .then(data => {
+      if (data.code === 1) {
+        document.getElementById('stock').textContent = '剩余库存：' + data.data;
+      }
+    })
+    .catch(() => {});
+}
+
+async function doSeckill() {
+  const btn = document.getElementById('seckillBtn');
+  const now = Date.now();
+
+  // ---- 1s debounce ----
+  if (now < cooldownUntil) {
+    showResult('fail', '请等待 ' + Math.ceil((cooldownUntil - now) / 1000) + ' 秒后再试');
+    return;
+  }
+
+  const goodsId = document.getElementById('goodsId').value;
+  const userId = document.getElementById('userId').value || randomUserId();
+
+  btn.disabled = true;
+  startCooldown();
+  clearResult();
+
+  try {
+    const resp = await fetch('/seckill/do/' + goodsId + '?userId=' + encodeURIComponent(userId), { method: 'POST' });
+    const data = await resp.json();
+
+    if (resp.status === 429) {
+      showResult('info', '请求太频繁，请慢一点');
+      return;
+    }
+
+    if (data.code === 1) {
+      showResult('success', '抢到了！');
+      // poll result
+      pollResult(goodsId, userId);
+    } else if (data.code === 2) {
+      showResult('info', '你已经抢过了');
+    } else if (data.code === 0) {
+      showResult('fail', '库存不足');
+    } else {
+      showResult('fail', data.message || '抢购失败');
+    }
+
+    fetchStock();
+  } catch (e) {
+    showResult('fail', '网络错误，请重试');
+  } finally {
+    // button stays disabled until cooldown ends
+    setTimeout(() => { btn.disabled = false; }, DEBOUNCE_MS);
+  }
+}
+
+function pollResult(goodsId, userId) {
+  const check = () => {
+    fetch('/seckill/result/' + goodsId + '?userId=' + encodeURIComponent(userId))
+      .then(r => r.json())
+      .then(data => {
+        if (data.code === 1) {
+          showResult('success', '订单已生成！订单号：' + data.data.id);
+        } else if (data.code === 3) {
+          showResult('info', '订单处理中...');
+          setTimeout(check, 500);
+        }
+      })
+      .catch(() => {});
+  };
+  setTimeout(check, 300);
+}
+
+function startCooldown() {
+  cooldownUntil = Date.now() + DEBOUNCE_MS;
+  const bar = document.getElementById('cooldownBar');
+  const fill = document.getElementById('cooldownFill');
+  bar.classList.add('active');
+  fill.style.transition = 'none';
+  fill.style.width = '100%';
+  requestAnimationFrame(() => {
+    fill.style.transition = 'width ' + (DEBOUNCE_MS / 1000) + 's linear';
+    fill.style.width = '0%';
+  });
+  clearTimeout(cooldownTimer);
+  cooldownTimer = setTimeout(() => {
+    bar.classList.remove('active');
+  }, DEBOUNCE_MS);
+}
+
+function showResult(type, msg) {
+  const el = document.getElementById('result');
+  el.className = 'result ' + type;
+  el.textContent = msg;
+}
+
+function clearResult() {
+  const el = document.getElementById('result');
+  el.className = 'result';
+  el.textContent = '';
+}
+</script>
+</body>
+</html>

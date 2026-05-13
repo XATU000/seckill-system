@@ -55,8 +55,8 @@ public class SeckillServiceImpl implements SeckillService {
 
     @Override
     public ApiResponse<Void> executeSeckill(Long goodsId, String userId) {
-        String stockKey = "stock:" + goodsId;
-        String orderKey = "order:" + goodsId;
+        String stockKey = "{s:" + goodsId + "}:stock";
+        String orderKey = "{s:" + goodsId + "}:order";
 
         Long result = redisTemplate.execute(
                 SECKILL_SCRIPT,
@@ -92,7 +92,7 @@ public class SeckillServiceImpl implements SeckillService {
 
     @Override
     public ApiResponse<Integer> getStock(Long goodsId) {
-        String stock = redisTemplate.opsForValue().get("stock:" + goodsId);
+        String stock = redisTemplate.opsForValue().get("{s:" + goodsId + "}:stock");
         if (stock == null) {
             return ApiResponse.fail(-1, "商品不存在");
         }
@@ -106,7 +106,7 @@ public class SeckillServiceImpl implements SeckillService {
             return ApiResponse.success("已抢到", order.get());
         }
         // 检查是否在 Redis 已购集合中（已入队但可能尚未落库）
-        Boolean inSet = redisTemplate.opsForSet().isMember("order:" + goodsId, userId);
+        Boolean inSet = redisTemplate.opsForSet().isMember("{s:" + goodsId + "}:order", userId);
         if (Boolean.TRUE.equals(inSet)) {
             return ApiResponse.fail(3, "订单处理中");
         }
