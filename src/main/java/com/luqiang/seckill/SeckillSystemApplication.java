@@ -57,7 +57,7 @@ public class SeckillSystemApplication {
 
             for (Goods g : list) {
 
-                String key = "stock:" + g.getId();
+                String key = "{s:" + g.getId() + "}:stock";
 
                 redisTemplate.opsForValue()
                         .set(key, String.valueOf(g.getStock()));

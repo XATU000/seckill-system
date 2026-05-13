@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>秒杀系统</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f0f0f5; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #e74c3c, #c0392b); color: #fff; padding: 30px 20px; text-align: center; }
+  .header h1 { font-size: 28px; margin-bottom: 4px; }
+  .header .subtitle { font-size: 13px; opacity: 0.8; }
+  .countdown-bar { background: #fff; padding: 16px 20px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .countdown-bar .label { font-size: 13px; color: #999; margin-bottom: 4px; }
+  .countdown-bar .timer { font-size: 36px; font-weight: 700; color: #e74c3c; font-variant-numeric: tabular-nums; }
+  .countdown-bar .timer.closed { color: #999; }
+  .countdown-bar .status { font-size: 14px; font-weight: 600; }
+  .countdown-bar .status.open { color: #e74c3c; }
+  .countdown-bar .status.waiting { color: #666; }
+
+  .goods-grid { max-width: 720px; margin: 20px auto; padding: 0 16px; display: grid; gap: 16px; }
+  .goods-card { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; align-items: center; gap: 20px; }
+  .goods-card .icon { width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 30px; flex-shrink: 0; }
+  .goods-card .icon.phone { background: #e8f5e9; }
+  .goods-card .icon.laptop { background: #e3f2fd; }
+  .goods-card .info { flex: 1; min-width: 0; }
+  .goods-card .name { font-size: 18px; font-weight: 600; color: #333; margin-bottom: 4px; }
+  .goods-card .price { font-size: 22px; font-weight: 700; color: #e74c3c; margin-bottom: 2px; }
+  .goods-card .price .unit { font-size: 14px; }
+  .goods-card .stock-info { font-size: 13px; color: #999; }
+  .goods-card .stock-info .num { color: #e74c3c; font-weight: 600; }
+  .goods-card .action { flex-shrink: 0; }
+  .goods-card .btn { width: 120px; padding: 12px 0; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: all .15s; color: #fff; background: #e74c3c; }
+  .goods-card .btn:active:not(:disabled) { transform: scale(0.96); }
+  .goods-card .btn:disabled { background: #ccc; cursor: not-allowed; }
+  .goods-card .result { font-size: 13px; margin-top: 6px; text-align: center; font-weight: 600; }
+  .goods-card .result.success { color: #27ae60; }
+  .goods-card .result.fail { color: #e74c3c; }
+  .goods-card .result.info { color: #2980b9; }
+
+  .user-bar { max-width: 720px; margin: 0 auto 0; padding: 0 16px 20px; display: flex; align-items: center; gap: 10px; }
+  .user-bar label { font-size: 14px; color: #666; white-space: nowrap; }
+  .user-bar input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; outline: none; max-width: 200px; }
+  .user-bar input:focus { border-color: #e74c3c; }
+
+  @media (max-width: 500px) {
+    .goods-card { flex-direction: column; text-align: center; }
+    .goods-card .action { width: 100%; }
+    .goods-card .btn { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>秒杀抢购</h1>
+  <div class="subtitle">限时特惠 · 手慢无</div>
+</div>
+
+<div class="countdown-bar">
+  <div class="label">距离本场结束</div>
+  <div class="timer" id="countdownTimer">00:00</div>
+  <div class="status waiting" id="countdownStatus">等待开场</div>
+</div>
+
+<div class="user-bar">
+  <label>用户 ID</label>
+  <input type="text" id="userId" placeholder="自动生成">
+</div>
+
+<div class="goods-grid" id="goodsGrid">
+</div>
+
+<script>
+// ======================== 配置 ========================
+const WINDOW_DURATION_S = 10;   // 秒杀窗口持续 10 秒
+const INTERVAL_DURATION_S = 25;  // 窗口间隔 25 秒（含窗口本身）
+const DEBOUNCE_MS = 1000;
+
+// ======================== 状态 ========================
+let goodsList = [];
+let cooldownMap = {};    // goodsId → cooldownUntil timestamp
+let roundStart = Date.now(); // 当前轮次开始时间（窗口起点）
+
+// ======================== 初始化 ========================
+document.getElementById('userId').value = randomUserId();
+fetchGoods();
+tickCountdown();
+setInterval(tickCountdown, 200);
+setInterval(fetchGoods, 5000); // 每 5s 刷新库存
+
+// ======================== 倒计时 ========================
+function tickCountdown() {
+  const now = Date.now();
+  const elapsed = (now - roundStart) / 1000;
+  let remaining;
+
+  if (elapsed < WINDOW_DURATION_S) {
+    // 窗口开启中
+    remaining = WINDOW_DURATION_S - elapsed;
+    document.getElementById('countdownTimer').textContent = formatTime(remaining);
+    document.getElementById('countdownTimer').className = 'timer';
+    document.getElementById('countdownStatus').textContent = '秒杀进行中';
+    document.getElementById('countdownStatus').className = 'status open';
+    setAllButtonsEnabled(true);
+  } else {
+    // 窗口已关闭，倒计时到下一轮
+    const nextStart = roundStart + INTERVAL_DURATION_S * 1000;
+    remaining = (nextStart - now) / 1000;
+    if (remaining <= 0) {
+      roundStart = now;
+      remaining = WINDOW_DURATION_S;
+    }
+    document.getElementById('countdownTimer').textContent = formatTime(remaining);
+    document.getElementById('countdownTimer').className = 'timer closed';
+    document.getElementById('countdownStatus').textContent = '等待下一轮';
+    document.getElementById('countdownStatus').className = 'status waiting';
+    setAllButtonsEnabled(false);
+  }
+}
+
+function isWindowOpen() {
+  const elapsed = (Date.now() - roundStart) / 1000;
+  return elapsed < WINDOW_DURATION_S;
+}
+
+function setAllButtonsEnabled(enabled) {
+  goodsList.forEach(g => {
+    const btn = document.getElementById('btn-' + g.id);
+    if (btn) btn.disabled = !enabled;
+  });
+}
+
+function formatTime(seconds) {
+  if (seconds <= 0) return '00:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+// ======================== 商品列表 ========================
+function fetchGoods() {
+  fetch('/goods/list')
+    .then(r => r.json())
+    .then(data => {
+      if (data.code === 1) {
+        goodsList = data.data;
+        renderGoods();
+      }
+    })
+    .catch(() => {});
+}
+
+function renderGoods() {
+  const grid = document.getElementById('goodsGrid');
+  const icons = { 1: ['📱', 'phone'], 2: ['💻', 'laptop'] };
+
+  grid.innerHTML = goodsList.map(g => {
+    const [emoji, iconClass] = icons[g.id] || ['📦', ''];
+    return `
+      <div class="goods-card">
+        <div class="icon ${iconClass}">${emoji}</div>
+        <div class="info">
+          <div class="name">${esc(g.name)}</div>
+          <div class="price"><span class="unit">¥</span>${g.price.toLocaleString()}</div>
+          <div class="stock-info">剩余库存 <span class="num">${g.stock}</span> 件</div>
+        </div>
+        <div class="action">
+          <button class="btn" id="btn-${g.id}" onclick="doSeckill(${g.id})" ${isWindowOpen() ? '' : 'disabled'}>${isWindowOpen() ? '立即秒杀' : '等待开场'}</button>
+          <div class="result" id="result-${g.id}"></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  // 按钮状态跟随窗口
+  if (!isWindowOpen()) setAllButtonsEnabled(false);
+}
+
+// ======================== 秒杀逻辑 ========================
+async function doSeckill(goodsId) {
+  const now = Date.now();
+
+  // ---- 窗口检查 ----
+  if (!isWindowOpen()) {
+    showResult(goodsId, 'fail', '秒杀已结束，请等待下一轮');
+    return;
+  }
+
+  // ---- 1s 防抖 ----
+  if (now < (cooldownMap[goodsId] || 0)) {
+    return;
+  }
+  cooldownMap[goodsId] = now + DEBOUNCE_MS;
+
+  const btn = document.getElementById('btn-' + goodsId);
+  const userId = document.getElementById('userId').value || randomUserId();
+  btn.disabled = true;
+  clearResult(goodsId);
+
+  try {
+    const resp = await fetch('/seckill/do/' + goodsId + '?userId=' + encodeURIComponent(userId), { method: 'POST' });
+    const data = await resp.json();
+
+    if (resp.status === 429) {
+      showResult(goodsId, 'info', '请求太频繁');
+      return;
+    }
+
+    switch (data.code) {
+      case 1:
+        showResult(goodsId, 'success', '抢到了！');
+        pollResult(goodsId, userId);
+        break;
+      case 2:
+        showResult(goodsId, 'info', '已抢过');
+        break;
+      case 0:
+        showResult(goodsId, 'fail', '已售罄');
+        break;
+      default:
+        showResult(goodsId, 'fail', data.message || '失败');
+    }
+
+    fetchGoods(); // 刷新库存
+  } catch (e) {
+    showResult(goodsId, 'fail', '网络错误');
+  } finally {
+    setTimeout(() => { btn.disabled = !isWindowOpen(); }, DEBOUNCE_MS);
+  }
+}
+
+function pollResult(goodsId, userId) {
+  const check = () => {
+    fetch('/seckill/result/' + goodsId + '?userId=' + encodeURIComponent(userId))
+      .then(r => r.json())
+      .then(data => {
+        if (data.code === 1) {
+          showResult(goodsId, 'success', '订单号: ' + data.data.id);
+        } else if (data.code === 3) {
+          setTimeout(check, 500);
+        }
+      })
+      .catch(() => {});
+  };
+  setTimeout(check, 300);
+}
+
+// ======================== 工具 ========================
+function randomUserId() {
+  return 'user_' + Math.random().toString(36).substring(2, 10);
+}
+
+function showResult(goodsId, type, msg) {
+  const el = document.getElementById('result-' + goodsId);
+  if (el) { el.className = 'result ' + type; el.textContent = msg; }
+}
+
+function clearResult(goodsId) {
+  const el = document.getElementById('result-' + goodsId);
+  if (el) { el.className = 'result'; el.textContent = ''; }
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>
