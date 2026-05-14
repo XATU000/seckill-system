@@ -14,29 +14,19 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
-import java.util.Arrays;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class SeckillServiceImpl implements SeckillService {
 
-    private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
+    /**
+     * 补偿脚本：入队失败时回滚库存 + 清除已购标记。
+     * CAS 模式下不再有 Lua 秒杀脚本，仅保留补偿用。
+     */
     private static final DefaultRedisScript<Long> COMPENSATE_SCRIPT;
 
     static {
-        SECKILL_SCRIPT = new DefaultRedisScript<>();
-        SECKILL_SCRIPT.setResultType(Long.class);
-        SECKILL_SCRIPT.setScriptText(
-                "if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then return 2 end;" +
-                        "local stock = redis.call('GET', KEYS[1]);" +
-                        "if (not stock) then return -1 end;" +
-                        "if (tonumber(stock) <= 0) then return 0 end;" +
-                        "redis.call('DECR', KEYS[1]);" +
-                        "redis.call('SADD', KEYS[2], ARGV[1]);" +
-                        "redis.call('EXPIRE', KEYS[2], 7200);" +
-                        "return 1;"
-        );
-
         COMPENSATE_SCRIPT = new DefaultRedisScript<>();
         COMPENSATE_SCRIPT.setResultType(Long.class);
         COMPENSATE_SCRIPT.setScriptText(
@@ -67,72 +57,52 @@ public class SeckillServiceImpl implements SeckillService {
     public ApiResponse<Void> executeSeckill(Long goodsId, String userId) {
         int seg = CacheConstants.segmentFor(userId);
 
-        // 先试命中的分段，失败则遍历剩余分段
         for (int i = 0; i < CacheConstants.STOCK_SEGMENTS; i++) {
             int currentSeg = (seg + i) % CacheConstants.STOCK_SEGMENTS;
             String stockKey = CacheConstants.stockKey(goodsId, currentSeg);
             String orderKey = CacheConstants.orderKey(goodsId, currentSeg);
 
-            Long result = redisTemplate.execute(
-                    SECKILL_SCRIPT,
-                    Arrays.asList(stockKey, orderKey),
-                    userId
-            );
-
-            if (result == null) {
-                return ApiResponse.fail(-2, "系统异常");
+            // Phase 1: CAS 预减库存 (DECR 自身原子，无需 Lua)
+            Long postStock = redisTemplate.opsForValue().decrement(stockKey);
+            if (postStock == null) {
+                // 库存 key 缺失，尝试预热当前段
+                if (!warmupSegment(goodsId, currentSeg)) {
+                    return ApiResponse.fail(-1, "商品不存在");
+                }
+                postStock = redisTemplate.opsForValue().decrement(stockKey);
+                if (postStock == null) {
+                    return ApiResponse.fail(-2, "系统异常");
+                }
             }
 
-            switch (result.intValue()) {
-                case 1:
-                    if (!orderQueueService.enqueue(goodsId, userId)) {
-                        redisTemplate.execute(
-                                COMPENSATE_SCRIPT,
-                                Arrays.asList(stockKey, orderKey),
-                                userId
-                        );
-                        return ApiResponse.fail(-4, "下单失败,请重试");
-                    }
-                    return ApiResponse.success("秒杀成功", null);
-                case 0:
-                    // 当前段库存不足，尝试下一段
-                    continue;
-                case 2:
-                    return ApiResponse.fail(2, "你已经抢过了");
-                case -1:
-                    // 库存 key 缺失，尝试预热当前段
-                    if (!warmupSegment(goodsId, currentSeg)) {
-                        return ApiResponse.fail(-1, "商品不存在");
-                    }
-                    result = redisTemplate.execute(
-                            SECKILL_SCRIPT,
-                            Arrays.asList(stockKey, orderKey),
-                            userId
-                    );
-                    if (result == null) {
-                        return ApiResponse.fail(-2, "系统异常");
-                    }
-                    switch (result.intValue()) {
-                        case 1:
-                            if (!orderQueueService.enqueue(goodsId, userId)) {
-                                redisTemplate.execute(COMPENSATE_SCRIPT,
-                                        Arrays.asList(stockKey, orderKey), userId);
-                                return ApiResponse.fail(-4, "下单失败,请重试");
-                            }
-                            return ApiResponse.success("秒杀成功", null);
-                        case 0:
-                            continue;
-                        case 2:
-                            return ApiResponse.fail(2, "你已经抢过了");
-                        default:
-                            return ApiResponse.fail(-3, "未知错误");
-                    }
-                default:
-                    return ApiResponse.fail(-3, "未知错误");
+            if (postStock < 0) {
+                // 库存不足，回滚 DECR
+                redisTemplate.opsForValue().increment(stockKey);
+                continue;
             }
+
+            // Phase 2: CAS 去重 (SADD 返回 0 表示已存在)
+            Long added = redisTemplate.opsForSet().add(orderKey, userId);
+            redisTemplate.expire(orderKey, 7200, TimeUnit.SECONDS);
+
+            if (added != null && added == 0) {
+                // 重复购买，回滚库存
+                redisTemplate.opsForValue().increment(stockKey);
+                return ApiResponse.fail(2, "你已经抢过了");
+            }
+
+            // 两阶段都成功，入队
+            if (!orderQueueService.enqueue(goodsId, userId)) {
+                redisTemplate.execute(
+                        COMPENSATE_SCRIPT,
+                        java.util.Arrays.asList(stockKey, orderKey),
+                        userId
+                );
+                return ApiResponse.fail(-4, "下单失败,请重试");
+            }
+            return ApiResponse.success("秒杀成功", null);
         }
 
-        // 所有分段都无库存
         return ApiResponse.fail(0, "库存不足");
     }
 
@@ -174,9 +144,6 @@ public class SeckillServiceImpl implements SeckillService {
         return ApiResponse.fail(4, "未查询到订单");
     }
 
-    /**
-     * 从 DB 加载商品库存，均分到所有分段。余数给第 0 段。
-     */
     private boolean warmupStock(Long goodsId) {
         Optional<Goods> opt = goodsRepository.findById(goodsId);
         if (opt.isEmpty()) {
@@ -196,9 +163,6 @@ public class SeckillServiceImpl implements SeckillService {
         return true;
     }
 
-    /**
-     * 预热单个分段（从 DB 重新加载后按比例分配）。
-     */
     private boolean warmupSegment(Long goodsId, int segment) {
         Optional<Goods> opt = goodsRepository.findById(goodsId);
         if (opt.isEmpty()) {
