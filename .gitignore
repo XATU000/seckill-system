@@ -31,3 +31,9 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### JMeter ###
+jmeter/result.jtl
+jmeter/*.log
+*.log
+.DS_Store

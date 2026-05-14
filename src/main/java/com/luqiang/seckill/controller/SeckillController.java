@@ -2,13 +2,12 @@ package com.luqiang.seckill.controller;
 
 import com.luqiang.seckill.common.ApiResponse;
 import com.luqiang.seckill.entity.OrderInfo;
+import com.luqiang.seckill.interceptor.JwtAuthInterceptor;
 import com.luqiang.seckill.service.SeckillService;
-import jakarta.validation.constraints.NotBlank;
-import org.springframework.validation.annotation.Validated;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@Validated
 @RequestMapping("/seckill")
 public class SeckillController {
 
@@ -20,8 +19,13 @@ public class SeckillController {
 
     @PostMapping("/do/{id}")
     public ApiResponse<Void> doSeckill(@PathVariable Long id,
-                                       @RequestParam @NotBlank(message = "userId不能为空") String userId) {
-        return seckillService.executeSeckill(id, userId);
+                                       HttpServletRequest request,
+                                       @RequestParam(required = false) String userId) {
+        String uid = resolveUserId(request, userId);
+        if (uid == null) {
+            return ApiResponse.fail(401, "userId 缺失");
+        }
+        return seckillService.executeSeckill(id, uid);
     }
 
     @GetMapping("/stock/{id}")
@@ -31,8 +35,25 @@ public class SeckillController {
 
     @GetMapping("/result/{id}")
     public ApiResponse<OrderInfo> getResult(@PathVariable Long id,
-                                            @RequestParam @NotBlank(message = "userId不能为空") String userId) {
-        return seckillService.getResult(id, userId);
+                                            HttpServletRequest request,
+                                            @RequestParam(required = false) String userId) {
+        String uid = resolveUserId(request, userId);
+        if (uid == null) {
+            return ApiResponse.fail(401, "userId 缺失");
+        }
+        return seckillService.getResult(id, uid);
+    }
 
+    private String resolveUserId(HttpServletRequest request, String queryUserId) {
+        // 优先从 JWT 拦截器注入的属性中获取
+        String jwtUserId = (String) request.getAttribute(JwtAuthInterceptor.USER_ID_ATTR);
+        if (jwtUserId != null) {
+            return jwtUserId;
+        }
+        // 兼容 URL 参数方式（过渡期）
+        if (queryUserId != null && !queryUserId.isBlank()) {
+            return queryUserId;
+        }
+        return null;
     }
 }
