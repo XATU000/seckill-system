@@ -17,15 +17,88 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
+  redis-master:
     image: redis:7-alpine
-    container_name: seckill-redis
+    container_name: seckill-redis-master
     ports:
       - "6380:6379"
     volumes:
-      - redis-data:/data
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf
+      - redis-master-data:/data
+    command: redis-server /usr/local/etc/redis/redis.conf
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+  redis-replica:
+    image: redis:7-alpine
+    container_name: seckill-redis-replica
+    ports:
+      - "6381:6379"
+    volumes:
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf
+      - redis-replica-data:/data
+    command: redis-server /usr/local/etc/redis/redis.conf --replicaof redis-master 6379
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+  sentinel-1:
+    image: redis:7-alpine
+    container_name: seckill-sentinel-1
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./config/sentinel-entrypoint.sh:/entrypoint.sh
+    command: sh /entrypoint.sh
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+  sentinel-2:
+    image: redis:7-alpine
+    container_name: seckill-sentinel-2
+    ports:
+      - "26380:26379"
+    volumes:
+      - ./config/sentinel-entrypoint.sh:/entrypoint.sh
+    command: sh /entrypoint.sh
+    depends_on:
+      sentinel-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+  sentinel-3:
+    image: redis:7-alpine
+    container_name: seckill-sentinel-3
+    ports:
+      - "26381:26379"
+    volumes:
+      - ./config/sentinel-entrypoint.sh:/entrypoint.sh
+    command: sh /entrypoint.sh
+    depends_on:
+      sentinel-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
       interval: 3s
       timeout: 2s
       retries: 5
@@ -38,9 +111,14 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
+      sentinel-1:
+        condition: service_healthy
+      sentinel-2:
+        condition: service_healthy
+      sentinel-3:
         condition: service_healthy
 
 volumes:
   mysql-data:
-  redis-data:
+  redis-master-data:
+  redis-replica-data:
