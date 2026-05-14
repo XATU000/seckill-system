@@ -10,4 +10,20 @@ public final class CacheConstants {
     public static final int GOODS_LIST_TTL_RANDOM_BOUND_SECONDS = 30;
     public static final int GOODS_LIST_EMPTY_TTL_SECONDS = 30;
     public static final String EMPTY_CACHE_MARKER = "__EMPTY__";
+
+    /** 库存分段数，将总库存拆成 N 段，分散 Lua 脚本竞争 */
+    public static final int STOCK_SEGMENTS = 10;
+
+    public static String stockKey(Long goodsId, int segment) {
+        return String.format("{s:%d}:stock:%d", goodsId, segment);
+    }
+
+    public static String orderKey(Long goodsId, int segment) {
+        return String.format("{s:%d}:order:%d", goodsId, segment);
+    }
+
+    /** userId → segment 路由 */
+    public static int segmentFor(String userId) {
+        return Math.abs(userId.hashCode()) % STOCK_SEGMENTS;
+    }
 }

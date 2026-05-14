@@ -1,6 +1,7 @@
 package com.luqiang.seckill.service.impl;
 
 import com.luqiang.seckill.common.ApiResponse;
+import com.luqiang.seckill.common.CacheConstants;
 import com.luqiang.seckill.entity.Goods;
 import com.luqiang.seckill.entity.OrderInfo;
 import com.luqiang.seckill.repository.GoodsRepository;
@@ -64,82 +65,97 @@ public class SeckillServiceImpl implements SeckillService {
 
     @Override
     public ApiResponse<Void> executeSeckill(Long goodsId, String userId) {
-        String stockKey = "{s:" + goodsId + "}:stock";
-        String orderKey = "{s:" + goodsId + "}:order";
+        int seg = CacheConstants.segmentFor(userId);
 
-        Long result = redisTemplate.execute(
-                SECKILL_SCRIPT,
-                Arrays.asList(stockKey, orderKey),
-                userId
-        );
+        // 先试命中的分段，失败则遍历剩余分段
+        for (int i = 0; i < CacheConstants.STOCK_SEGMENTS; i++) {
+            int currentSeg = (seg + i) % CacheConstants.STOCK_SEGMENTS;
+            String stockKey = CacheConstants.stockKey(goodsId, currentSeg);
+            String orderKey = CacheConstants.orderKey(goodsId, currentSeg);
 
-        if (result == null) {
-            return ApiResponse.fail(-2, "系统异常");
-        }
+            Long result = redisTemplate.execute(
+                    SECKILL_SCRIPT,
+                    Arrays.asList(stockKey, orderKey),
+                    userId
+            );
 
-        switch (result.intValue()) {
-            case 1:
-                if (!orderQueueService.enqueue(goodsId, userId)) {
-                    redisTemplate.execute(
-                            COMPENSATE_SCRIPT,
+            if (result == null) {
+                return ApiResponse.fail(-2, "系统异常");
+            }
+
+            switch (result.intValue()) {
+                case 1:
+                    if (!orderQueueService.enqueue(goodsId, userId)) {
+                        redisTemplate.execute(
+                                COMPENSATE_SCRIPT,
+                                Arrays.asList(stockKey, orderKey),
+                                userId
+                        );
+                        return ApiResponse.fail(-4, "下单失败,请重试");
+                    }
+                    return ApiResponse.success("秒杀成功", null);
+                case 0:
+                    // 当前段库存不足，尝试下一段
+                    continue;
+                case 2:
+                    return ApiResponse.fail(2, "你已经抢过了");
+                case -1:
+                    // 库存 key 缺失，尝试预热当前段
+                    if (!warmupSegment(goodsId, currentSeg)) {
+                        return ApiResponse.fail(-1, "商品不存在");
+                    }
+                    result = redisTemplate.execute(
+                            SECKILL_SCRIPT,
                             Arrays.asList(stockKey, orderKey),
                             userId
                     );
-                    return ApiResponse.fail(-4, "下单失败,请重试");
-                }
-                return ApiResponse.success("秒杀成功", null);
-            case 0:
-                return ApiResponse.fail(0, "库存不足");
-            case 2:
-                return ApiResponse.fail(2, "你已经抢过了");
-            case -1:
-                // 库存 key 缺失，尝试从 DB 回源预热，再重试一次
-                if (!warmupStock(goodsId)) {
-                    return ApiResponse.fail(-1, "商品不存在");
-                }
-                result = redisTemplate.execute(
-                        SECKILL_SCRIPT,
-                        Arrays.asList(stockKey, orderKey),
-                        userId
-                );
-                if (result == null) {
-                    return ApiResponse.fail(-2, "系统异常");
-                }
-                // 重试后递归处理结果（仅处理简单情况，避免再次 -1 递归）
-                switch (result.intValue()) {
-                    case 1:
-                        if (!orderQueueService.enqueue(goodsId, userId)) {
-                            redisTemplate.execute(COMPENSATE_SCRIPT,
-                                    Arrays.asList(stockKey, orderKey), userId);
-                            return ApiResponse.fail(-4, "下单失败,请重试");
-                        }
-                        return ApiResponse.success("秒杀成功", null);
-                    case 0:
-                        return ApiResponse.fail(0, "库存不足");
-                    case 2:
-                        return ApiResponse.fail(2, "你已经抢过了");
-                    default:
-                        return ApiResponse.fail(-3, "未知错误");
-                }
-            default:
-                return ApiResponse.fail(-3, "未知错误");
+                    if (result == null) {
+                        return ApiResponse.fail(-2, "系统异常");
+                    }
+                    switch (result.intValue()) {
+                        case 1:
+                            if (!orderQueueService.enqueue(goodsId, userId)) {
+                                redisTemplate.execute(COMPENSATE_SCRIPT,
+                                        Arrays.asList(stockKey, orderKey), userId);
+                                return ApiResponse.fail(-4, "下单失败,请重试");
+                            }
+                            return ApiResponse.success("秒杀成功", null);
+                        case 0:
+                            continue;
+                        case 2:
+                            return ApiResponse.fail(2, "你已经抢过了");
+                        default:
+                            return ApiResponse.fail(-3, "未知错误");
+                    }
+                default:
+                    return ApiResponse.fail(-3, "未知错误");
+            }
         }
+
+        // 所有分段都无库存
+        return ApiResponse.fail(0, "库存不足");
     }
 
     @Override
     public ApiResponse<Integer> getStock(Long goodsId) {
-        String key = "{s:" + goodsId + "}:stock";
-        String stock = redisTemplate.opsForValue().get(key);
-        if (stock == null) {
+        int total = 0;
+        boolean anyExists = false;
+        for (int i = 0; i < CacheConstants.STOCK_SEGMENTS; i++) {
+            String v = redisTemplate.opsForValue().get(CacheConstants.stockKey(goodsId, i));
+            if (v != null) {
+                anyExists = true;
+                total += Integer.parseInt(v);
+            }
+        }
+        if (!anyExists) {
             if (!warmupStock(goodsId)) {
                 return ApiResponse.fail(-1, "商品不存在");
             }
-            stock = redisTemplate.opsForValue().get(key);
-            if (stock == null) {
-                return ApiResponse.fail(-1, "商品不存在");
-            }
+            total = goodsRepository.findById(goodsId)
+                    .map(Goods::getStock)
+                    .orElse(0);
         }
-        return ApiResponse.success("查询成功", Integer.parseInt(stock));
+        return ApiResponse.success("查询成功", total);
     }
 
     @Override
@@ -148,16 +164,18 @@ public class SeckillServiceImpl implements SeckillService {
         if (order.isPresent()) {
             return ApiResponse.success("已抢到", order.get());
         }
-        // 检查是否在 Redis 已购集合中（已入队但可能尚未落库）
-        Boolean inSet = redisTemplate.opsForSet().isMember("{s:" + goodsId + "}:order", userId);
-        if (Boolean.TRUE.equals(inSet)) {
-            return ApiResponse.fail(3, "订单处理中");
+        for (int i = 0; i < CacheConstants.STOCK_SEGMENTS; i++) {
+            Boolean inSet = redisTemplate.opsForSet().isMember(
+                    CacheConstants.orderKey(goodsId, i), userId);
+            if (Boolean.TRUE.equals(inSet)) {
+                return ApiResponse.fail(3, "订单处理中");
+            }
         }
         return ApiResponse.fail(4, "未查询到订单");
     }
 
     /**
-     * 从 DB 加载商品库存到 Redis。成功返回 true，商品不存在返回 false。
+     * 从 DB 加载商品库存，均分到所有分段。余数给第 0 段。
      */
     private boolean warmupStock(Long goodsId) {
         Optional<Goods> opt = goodsRepository.findById(goodsId);
@@ -165,9 +183,35 @@ public class SeckillServiceImpl implements SeckillService {
             return false;
         }
         Goods goods = opt.get();
-        String key = "{s:" + goodsId + "}:stock";
-        redisTemplate.opsForValue().set(key, String.valueOf(goods.getStock()));
-        log.info("库存预热: goodsId={} stock={}", goodsId, goods.getStock());
+        int base = goods.getStock() / CacheConstants.STOCK_SEGMENTS;
+        int remainder = goods.getStock() % CacheConstants.STOCK_SEGMENTS;
+        for (int i = 0; i < CacheConstants.STOCK_SEGMENTS; i++) {
+            int segStock = base + (i < remainder ? 1 : 0);
+            redisTemplate.opsForValue().set(
+                    CacheConstants.stockKey(goodsId, i),
+                    String.valueOf(segStock));
+        }
+        log.info("库存预热分段: goodsId={} totalStock={} segments={} base={} remainder={}",
+                goodsId, goods.getStock(), CacheConstants.STOCK_SEGMENTS, base, remainder);
+        return true;
+    }
+
+    /**
+     * 预热单个分段（从 DB 重新加载后按比例分配）。
+     */
+    private boolean warmupSegment(Long goodsId, int segment) {
+        Optional<Goods> opt = goodsRepository.findById(goodsId);
+        if (opt.isEmpty()) {
+            return false;
+        }
+        Goods goods = opt.get();
+        int base = goods.getStock() / CacheConstants.STOCK_SEGMENTS;
+        int remainder = goods.getStock() % CacheConstants.STOCK_SEGMENTS;
+        int segStock = base + (segment < remainder ? 1 : 0);
+        redisTemplate.opsForValue().set(
+                CacheConstants.stockKey(goodsId, segment),
+                String.valueOf(segStock));
+        log.info("单段预热: goodsId={} segment={} stock={}", goodsId, segment, segStock);
         return true;
     }
 }
