@@ -1,28 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
-    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="秒杀系统压测">
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="纯秒杀压测(无认证)">
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments">
-        <collectionProp name="Arguments.arguments">
-          <elementProp name="THREADS" elementType="Argument">
-            <stringProp name="Argument.name">THREADS</stringProp>
-            <stringProp name="Argument.value">${__P(threads,1000)}</stringProp>
-          </elementProp>
-          <elementProp name="RAMP" elementType="Argument">
-            <stringProp name="Argument.name">RAMP</stringProp>
-            <stringProp name="Argument.value">${__P(ramp,5)}</stringProp>
-          </elementProp>
-        </collectionProp>
+        <collectionProp name="Arguments.arguments"/>
       </elementProp>
-      <stringProp name="TestPlan.comments">参数化压测: -Jthreads=N -Jramp=N</stringProp>
+      <stringProp name="TestPlan.comments">纯秒杀接口压测 无JWT认证 直接?userId=</stringProp>
     </TestPlan>
     <hashTree>
 
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="秒杀线程组">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="纯秒杀线程组">
         <intProp name="ThreadGroup.num_threads">1000</intProp>
-        <intProp name="ThreadGroup.ramp_time">5</intProp>
+        <intProp name="ThreadGroup.ramp_time">3</intProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
@@ -37,23 +28,13 @@
           <stringProp name="filename"></stringProp>
           <stringProp name="parameters"></stringProp>
           <stringProp name="script">
-            vars.put("USER_ID", ctx.getThreadNum() + "_" + System.currentTimeMillis() + "_" + java.util.concurrent.ThreadLocalRandom.current().nextInt(10000));
+            vars.put("USER_ID", "perf_" + ctx.getThreadNum() + "_" + System.currentTimeMillis() + "_" + java.util.concurrent.ThreadLocalRandom.current().nextInt(100000));
           </stringProp>
           <stringProp name="scriptLanguage">groovy</stringProp>
         </JSR223PreProcessor>
         <hashTree/>
 
-        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager">
-          <collectionProp name="HeaderManager.headers">
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Authorization</stringProp>
-              <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
-            </elementProp>
-          </collectionProp>
-        </HeaderManager>
-        <hashTree/>
-
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="登录获取Token">
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="纯秒杀">
           <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments">
             <collectionProp name="Arguments.arguments">
@@ -64,38 +45,6 @@
                 <stringProp name="Argument.value">${USER_ID}</stringProp>
               </elementProp>
             </collectionProp>
-          </elementProp>
-          <stringProp name="HTTPSampler.domain">localhost</stringProp>
-          <stringProp name="HTTPSampler.port">8080</stringProp>
-          <stringProp name="HTTPSampler.protocol">http</stringProp>
-          <stringProp name="HTTPSampler.path">/auth/login</stringProp>
-          <stringProp name="HTTPSampler.method">POST</stringProp>
-          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
-          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
-          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
-          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
-        </HTTPSamplerProxy>
-        <hashTree>
-          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="提取Token">
-            <stringProp name="JSONPostProcessor.referenceNames">TOKEN</stringProp>
-            <stringProp name="JSONPostProcessor.jsonPathExprs">$.data.token</stringProp>
-          </JSONPostProcessor>
-          <hashTree/>
-          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="断言登录成功">
-            <collectionProp name="Asserion.test_strings">
-              <stringProp name="0">200</stringProp>
-            </collectionProp>
-            <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
-            <boolProp name="Assertion.assume_success">false</boolProp>
-            <intProp name="Assertion.test_type">8</intProp>
-          </ResponseAssertion>
-          <hashTree/>
-        </hashTree>
-
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="秒杀">
-          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
-          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments">
-            <collectionProp name="Arguments.arguments"/>
           </elementProp>
           <stringProp name="HTTPSampler.domain">localhost</stringProp>
           <stringProp name="HTTPSampler.port">8080</stringProp>
