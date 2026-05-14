@@ -36,4 +36,10 @@ build/
 jmeter/result.jtl
 jmeter/*.log
 *.log
+tokens.csv
+
+### macOS ###
 .DS_Store
+
+### Cursor ###
+.cursor/
