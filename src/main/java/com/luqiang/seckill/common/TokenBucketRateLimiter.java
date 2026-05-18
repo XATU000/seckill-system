@@ -1,5 +1,7 @@
 package com.luqiang.seckill.common;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 /**
  * Token bucket rate limiter. Thread-safe, no external dependencies.
  * Each {@link #tryAcquire()} call consumes 1 token if available.
@@ -10,6 +12,7 @@ public class TokenBucketRateLimiter {
     private final double capacity;
     private double tokens;
     private long lastRefillNanos;
+    private final ReentrantLock lock = new ReentrantLock();
 
     public TokenBucketRateLimiter(double ratePerSecond) {
         this.ratePerSecond = ratePerSecond;
@@ -21,16 +24,21 @@ public class TokenBucketRateLimiter {
     /**
      * Try to consume a single token. Returns true if allowed, false if rate-limited.
      */
-    public synchronized boolean tryAcquire() {
-        long now = System.nanoTime();
-        double elapsed = (now - lastRefillNanos) / 1_000_000_000.0;
-        tokens = Math.min(capacity, tokens + elapsed * ratePerSecond);
-        lastRefillNanos = now;
+    public boolean tryAcquire() {
+        lock.lock();
+        try {
+            long now = System.nanoTime();
+            double elapsed = (now - lastRefillNanos) / 1_000_000_000.0;
+            tokens = Math.min(capacity, tokens + elapsed * ratePerSecond);
+            lastRefillNanos = now;
 
-        if (tokens >= 1.0) {
-            tokens -= 1.0;
-            return true;
+            if (tokens >= 1.0) {
+                tokens -= 1.0;
+                return true;
+            }
+            return false;
+        } finally {
+            lock.unlock();
         }
-        return false;
     }
 }
