@@ -15,10 +15,7 @@ import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-<<<<<<< HEAD
 import java.util.List;
-=======
->>>>>>> parent of 0317afe (Merge pull request #10 from luqiang-code/revert-9-feature/queue)
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -80,7 +77,6 @@ public class SeckillServiceImpl implements SeckillService {
                 continue;
             }
 
-<<<<<<< HEAD
             // Phase 2+3: Pipeline SADD + EXPIRE + LPUSH + EXPIRE → 1 RTT instead of 4
             @SuppressWarnings({"unchecked", "rawtypes"})
             List<Object> pipeResults = redisTemplate.executePipelined(
@@ -100,29 +96,15 @@ public class SeckillServiceImpl implements SeckillService {
             if (added != null && added == 0) {
                 // Already LPUSH'd — remove from queue
                 redisTemplate.opsForList().remove("order:queue", 1, goodsId + ":" + userId);
-=======
-            // Phase 2: Redis 全局去重（跨实例必须走 Redis）
-            Long added = redisTemplate.opsForSet().add(orderKey, userId);
-            redisTemplate.expire(orderKey, 7200, TimeUnit.SECONDS);
-
-            if (added != null && added == 0) {
->>>>>>> parent of 0317afe (Merge pull request #10 from luqiang-code/revert-9-feature/queue)
                 localStockCache.rollback(stockKey);
                 return ApiResponse.fail(2, "你已经抢过了");
             }
 
-<<<<<<< HEAD
             // Check LPUSH result
             Object lpushResult = pipeResults.get(2);
             if (lpushResult == null) {
                 redisTemplate.opsForSet().remove(orderKey, userId);
                 localStockCache.rollback(stockKey);
-=======
-            // Phase 3: 异步入队
-            if (!orderQueueService.enqueue(goodsId, userId)) {
-                localStockCache.rollback(stockKey);
-                redisTemplate.opsForSet().remove(orderKey, userId);
->>>>>>> parent of 0317afe (Merge pull request #10 from luqiang-code/revert-9-feature/queue)
                 return ApiResponse.fail(-4, "下单失败,请重试");
             }
             return ApiResponse.success("秒杀成功", null);
