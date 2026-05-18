@@ -15,7 +15,7 @@ import java.util.List;
 public class OrderPersistScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(OrderPersistScheduler.class);
-    private static final int BATCH_SIZE = 30;
+    private static final int BATCH_SIZE = 200;
 
     private final OrderQueueService queueService;
     private final JdbcTemplate jdbcTemplate;

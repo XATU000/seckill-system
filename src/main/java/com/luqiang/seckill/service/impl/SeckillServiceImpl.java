@@ -7,13 +7,15 @@ import com.luqiang.seckill.entity.Goods;
 import com.luqiang.seckill.entity.OrderInfo;
 import com.luqiang.seckill.repository.GoodsRepository;
 import com.luqiang.seckill.repository.OrderInfoRepository;
-import com.luqiang.seckill.service.OrderQueueService;
 import com.luqiang.seckill.service.SeckillService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,7 +30,6 @@ public class SeckillServiceImpl implements SeckillService {
     private static final int BATCH_SIZE = 20;
 
     private final StringRedisTemplate redisTemplate;
-    private final OrderQueueService orderQueueService;
     private final OrderInfoRepository orderInfoRepository;
     private final GoodsRepository goodsRepository;
     private final LocalStockCache localStockCache;
@@ -37,12 +38,10 @@ public class SeckillServiceImpl implements SeckillService {
     private final Set<Long> warmedUpGoods = ConcurrentHashMap.newKeySet();
 
     public SeckillServiceImpl(StringRedisTemplate redisTemplate,
-                              OrderQueueService orderQueueService,
                               OrderInfoRepository orderInfoRepository,
                               GoodsRepository goodsRepository,
                               LocalStockCache localStockCache) {
         this.redisTemplate = redisTemplate;
-        this.orderQueueService = orderQueueService;
         this.orderInfoRepository = orderInfoRepository;
         this.goodsRepository = goodsRepository;
         this.localStockCache = localStockCache;
@@ -78,19 +77,34 @@ public class SeckillServiceImpl implements SeckillService {
                 continue;
             }
 
-            // Phase 2: Redis 全局去重（跨实例必须走 Redis）
-            Long added = redisTemplate.opsForSet().add(orderKey, userId);
-            redisTemplate.expire(orderKey, 7200, TimeUnit.SECONDS);
+            // Phase 2+3: Pipeline SADD + EXPIRE + LPUSH + EXPIRE → 1 RTT instead of 4
+            @SuppressWarnings({"unchecked", "rawtypes"})
+            List<Object> pipeResults = redisTemplate.executePipelined(
+                    new SessionCallback<Object>() {
+                        @Override
+                        public Object execute(RedisOperations operations) {
+                            operations.opsForSet().add(orderKey, userId);
+                            operations.expire(orderKey, 7200, TimeUnit.SECONDS);
+                            operations.opsForList().leftPush("order:queue", goodsId + ":" + userId);
+                            operations.expire("order:queue", 600, TimeUnit.SECONDS);
+                            return null;
+                        }
+                    });
 
+            // Check SADD result
+            Long added = (Long) pipeResults.get(0);
             if (added != null && added == 0) {
+                // Already LPUSH'd — remove from queue
+                redisTemplate.opsForList().remove("order:queue", 1, goodsId + ":" + userId);
                 localStockCache.rollback(stockKey);
                 return ApiResponse.fail(2, "你已经抢过了");
             }
 
-            // Phase 3: 异步入队
-            if (!orderQueueService.enqueue(goodsId, userId)) {
-                localStockCache.rollback(stockKey);
+            // Check LPUSH result
+            Object lpushResult = pipeResults.get(2);
+            if (lpushResult == null) {
                 redisTemplate.opsForSet().remove(orderKey, userId);
+                localStockCache.rollback(stockKey);
                 return ApiResponse.fail(-4, "下单失败,请重试");
             }
             return ApiResponse.success("秒杀成功", null);
