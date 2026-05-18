@@ -21,13 +21,8 @@ spring:
   data:
     redis:
       # ========== Sentinel 模式（高可用） ==========
-      sentinel:
-        master: seckill-master
-        nodes:
-          - 127.0.0.1:26379
-          - 127.0.0.1:26380
-          - 127.0.0.1:26381
-        timeout: 3000
+      host: 127.0.0.1
+      port: 6380
       lettuce:
         pool:
           max-active: 100
