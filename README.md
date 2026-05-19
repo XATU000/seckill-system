@@ -99,9 +99,10 @@ return 1
 
 ### 缓存策略
 
-- **防穿透** — 互斥锁（`setIfAbsent`）重建缓存 + 空值缓存
-- **防雪崩** — 随机 TTL（60s + random 0-30s）
-- **防击穿** — 库存 key 缺失时自动从 MySQL 预热回源
+- **防穿透** — 布隆过滤器拦截不存在的 goodsId + 空值缓存（`__EMPTY__`），防止恶意随机 key 攻击
+- **防击穿** — 互斥锁（`setIfAbsent`）保证仅一线程回源重建缓存，其余线程 sleep 后重试
+- **防雪崩** — 随机 TTL（60s + random 0-30s），避免大量缓存同时过期
+- **预热回源** — 库存 key 缺失时自动从 MySQL 加载并写入 Redis，启动时预填充本地库存
 
 ### Redis 高可用
 
@@ -144,8 +145,14 @@ src/main/java/com/luqiang/seckill/
 ├── config/
 │   └── WebConfig.java              # 拦截器注册 + Redis 配置
 ├── common/
-│   ├── JwtUtil.java                # JWT 工具
-│   └── TokenBucketRateLimiter.java # 限流算法实现
+│   ├── ApiResponse.java             # 统一响应体
+│   ├── BloomFilter.java             # Redis Bitmap 布隆过滤器（防穿透）
+│   ├── CacheConstants.java          # 缓存 key 常量 + 分段路由
+│   ├── GlobalExceptionHandler.java  # 全局异常处理
+│   ├── JwtUtil.java                 # JWT 工具
+│   ├── LocalStockCache.java         # 本地库存预留（热点 key 防护）
+│   ├── RedisUtil.java               # Redis 工具封装
+│   └── TokenBucketRateLimiter.java  # 限流算法实现
 ├── entity/                         # Goods, OrderInfo
 └── repository/                     # JPA Repository
 ```
