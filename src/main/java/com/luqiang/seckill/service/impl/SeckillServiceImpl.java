@@ -1,6 +1,7 @@
 package com.luqiang.seckill.service.impl;
 
 import com.luqiang.seckill.common.ApiResponse;
+import com.luqiang.seckill.common.BloomFilter;
 import com.luqiang.seckill.common.CacheConstants;
 import com.luqiang.seckill.common.LocalStockCache;
 import com.luqiang.seckill.entity.Goods;
@@ -33,6 +34,7 @@ public class SeckillServiceImpl implements SeckillService {
     private final OrderInfoRepository orderInfoRepository;
     private final GoodsRepository goodsRepository;
     private final LocalStockCache localStockCache;
+    private final BloomFilter bloomFilter;
 
     /** 已确认预热过的商品，避免重复 hasKey 检查 */
     private final Set<Long> warmedUpGoods = ConcurrentHashMap.newKeySet();
@@ -40,15 +42,22 @@ public class SeckillServiceImpl implements SeckillService {
     public SeckillServiceImpl(StringRedisTemplate redisTemplate,
                               OrderInfoRepository orderInfoRepository,
                               GoodsRepository goodsRepository,
-                              LocalStockCache localStockCache) {
+                              LocalStockCache localStockCache,
+                              BloomFilter bloomFilter) {
         this.redisTemplate = redisTemplate;
         this.orderInfoRepository = orderInfoRepository;
         this.goodsRepository = goodsRepository;
         this.localStockCache = localStockCache;
+        this.bloomFilter = bloomFilter;
     }
 
     @Override
     public ApiResponse<Void> executeSeckill(Long goodsId, String userId) {
+        // 布隆过滤器快速拦截不存在的 goodsId，防止穿透 DB
+        if (!bloomFilter.mightContain(goodsId)) {
+            return ApiResponse.fail(-1, "商品不存在");
+        }
+
         // 延迟预热：首次请求时确保 Redis 库存 key 存在
         if (!warmedUpGoods.contains(goodsId)) {
             if (Boolean.FALSE.equals(redisTemplate.hasKey(CacheConstants.stockKey(goodsId, 0)))) {
@@ -170,6 +179,7 @@ public class SeckillServiceImpl implements SeckillService {
         }
         log.info("库存预热分段: goodsId={} totalStock={} segments={} base={} remainder={}",
                 goodsId, goods.getStock(), CacheConstants.STOCK_SEGMENTS, base, remainder);
+        bloomFilter.add(goodsId);
         return true;
     }
 

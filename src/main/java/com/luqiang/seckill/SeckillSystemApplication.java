@@ -1,5 +1,6 @@
 package com.luqiang.seckill;
 
+import com.luqiang.seckill.common.BloomFilter;
 import com.luqiang.seckill.common.CacheConstants;
 import com.luqiang.seckill.common.LocalStockCache;
 import com.luqiang.seckill.entity.Goods;
@@ -53,11 +54,15 @@ public class SeckillSystemApplication {
 
     @Bean
     public CommandLineRunner initStock(StringRedisTemplate redisTemplate,
-                                       LocalStockCache localStockCache) {
+                                       LocalStockCache localStockCache,
+                                       BloomFilter bloomFilter) {
         return args -> {
             log.info("========== Redis库存初始化开始 ==========");
 
             List<Goods> list = goodsMapper.findAll();
+
+            // 初始化布隆过滤器（仅首次）
+            bloomFilter.initAll(list.stream().map(Goods::getId).toList());
 
             for (Goods g : list) {
                 String sentinelKey = CacheConstants.stockKey(g.getId(), 0);
