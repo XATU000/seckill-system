@@ -163,6 +163,9 @@ public class SeckillServiceImpl implements SeckillService {
     public ApiResponse<OrderInfo> getResult(Long goodsId, String userId) {
         Optional<OrderInfo> order = orderInfoRepository.findByGoodsIdAndUserId(goodsId, userId);
         if (order.isPresent()) {
+            if (Integer.valueOf(OrderInfo.STATUS_CANCELLED).equals(order.get().getStatus())) {
+                return ApiResponse.fail(4, "订单已取消");
+            }
             return ApiResponse.success("已抢到", order.get());
         }
         for (int i = 0; i < CacheConstants.STOCK_SEGMENTS; i++) {
