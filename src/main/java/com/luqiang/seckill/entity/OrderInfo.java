@@ -20,6 +20,13 @@ public class OrderInfo {
     @Column(name = "create_time", nullable = false)
     private LocalDateTime createTime;
 
+    public static final int STATUS_PENDING = 0;
+    public static final int STATUS_PAID = 1;
+    public static final int STATUS_CANCELLED = 2;
+
+    @Column(name = "status", nullable = false)
+    private Integer status = STATUS_PENDING;
+
     public OrderInfo() {
     }
 
@@ -27,6 +34,7 @@ public class OrderInfo {
         this.goodsId = goodsId;
         this.userId = userId;
         this.createTime = LocalDateTime.now();
+        this.status = STATUS_PENDING;
     }
 
     public Long getId() {
@@ -59,5 +67,13 @@ public class OrderInfo {
 
     public void setCreateTime(LocalDateTime createTime) {
         this.createTime = createTime;
+    }
+
+    public Integer getStatus() {
+        return status;
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
     }
 }

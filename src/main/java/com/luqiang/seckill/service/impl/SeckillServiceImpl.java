@@ -120,6 +120,10 @@ public class SeckillServiceImpl implements SeckillService {
                 localStockCache.rollback(stockKey);
                 return ApiResponse.fail(-4, "下单失败,请重试");
             }
+            // 加入延迟取消队列
+            long expireAt = System.currentTimeMillis() + CacheConstants.CANCEL_DELAY_MS;
+            String cancelMember = goodsId + ":" + userId + ":" + currentSeg;
+            redisTemplate.opsForZSet().add(CacheConstants.CANCEL_ZSET_KEY, cancelMember, expireAt);
             return ApiResponse.success("秒杀成功", null);
         }
 
@@ -159,6 +163,9 @@ public class SeckillServiceImpl implements SeckillService {
     public ApiResponse<OrderInfo> getResult(Long goodsId, String userId) {
         Optional<OrderInfo> order = orderInfoRepository.findByGoodsIdAndUserId(goodsId, userId);
         if (order.isPresent()) {
+            if (Integer.valueOf(OrderInfo.STATUS_CANCELLED).equals(order.get().getStatus())) {
+                return ApiResponse.fail(4, "订单已取消");
+            }
             return ApiResponse.success("已抢到", order.get());
         }
         for (int i = 0; i < CacheConstants.STOCK_SEGMENTS; i++) {

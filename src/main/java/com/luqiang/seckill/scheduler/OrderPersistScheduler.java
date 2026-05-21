@@ -36,7 +36,8 @@ public class OrderPersistScheduler {
 
         try {
             jdbcTemplate.batchUpdate(
-                    "INSERT INTO seckill_order (goods_id, user_id, create_time) VALUES (?, ?, ?)",
+                    "INSERT INTO seckill_order (goods_id, user_id, create_time) VALUES (?, ?, ?) " +
+                    "ON DUPLICATE KEY UPDATE create_time = VALUES(create_time), status = IF(status = 2, 0, status)",
                     batch,
                     BATCH_SIZE,
                     (ps, item) -> {
