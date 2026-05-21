@@ -62,7 +62,6 @@ public class SeckillServiceImpl implements SeckillService {
         if (Boolean.TRUE.equals(redisTemplate.hasKey(CacheConstants.soldOutKey(goodsId)))) {
             return ApiResponse.fail(0, "库存不足");
         }
-
         // 延迟预热：首次请求时确保 Redis 库存 key 存在
         if (!warmedUpGoods.contains(goodsId)) {
             if (Boolean.FALSE.equals(redisTemplate.hasKey(CacheConstants.stockKey(goodsId, 0)))) {
