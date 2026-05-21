@@ -22,6 +22,14 @@ public final class CacheConstants {
         return String.format("{s:%d}:order:%d", goodsId, segment);
     }
 
+    /** 售罄标记，库存归零后设置，用于快速拒绝请求 */
+    public static String soldOutKey(Long goodsId) {
+        return String.format("{s:%d}:soldout", goodsId);
+    }
+
+    /** 售罄标记 TTL（秒），超时自动清除，防止库存回补后永久拦截 */
+    public static final int SOLDOUT_TTL_SECONDS = 3600;
+
     /** userId → segment 路由 */
     public static int segmentFor(String userId) {
         return Math.abs(userId.hashCode()) % STOCK_SEGMENTS;
