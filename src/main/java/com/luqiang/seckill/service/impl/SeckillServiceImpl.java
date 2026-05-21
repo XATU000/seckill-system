@@ -120,6 +120,10 @@ public class SeckillServiceImpl implements SeckillService {
                 localStockCache.rollback(stockKey);
                 return ApiResponse.fail(-4, "下单失败,请重试");
             }
+            // 加入延迟取消队列
+            long expireAt = System.currentTimeMillis() + CacheConstants.CANCEL_DELAY_MS;
+            String cancelMember = goodsId + ":" + userId + ":" + currentSeg;
+            redisTemplate.opsForZSet().add(CacheConstants.CANCEL_ZSET_KEY, cancelMember, expireAt);
             return ApiResponse.success("秒杀成功", null);
         }
 

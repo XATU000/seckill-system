@@ -30,6 +30,12 @@ public final class CacheConstants {
     /** 售罄标记 TTL（秒），超时自动清除，防止库存回补后永久拦截 */
     public static final int SOLDOUT_TTL_SECONDS = 3600;
 
+    /** 订单取消延迟队列 ZSET key */
+    public static final String CANCEL_ZSET_KEY = "order:cancel:zset";
+
+    /** 订单取消延迟时间（毫秒），15 分钟未支付自动取消 */
+    public static final long CANCEL_DELAY_MS = 15 * 60 * 1000L;
+
     /** userId → segment 路由 */
     public static int segmentFor(String userId) {
         return Math.abs(userId.hashCode()) % STOCK_SEGMENTS;
