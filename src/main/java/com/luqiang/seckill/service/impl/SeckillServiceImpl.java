@@ -58,6 +58,10 @@ public class SeckillServiceImpl implements SeckillService {
             return ApiResponse.fail(-1, "商品不存在");
         }
 
+        // 售罄标记快速短路：库存归零后不再遍历分片
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(CacheConstants.soldOutKey(goodsId)))) {
+            return ApiResponse.fail(0, "库存不足");
+        }
         // 延迟预热：首次请求时确保 Redis 库存 key 存在
         if (!warmedUpGoods.contains(goodsId)) {
             if (Boolean.FALSE.equals(redisTemplate.hasKey(CacheConstants.stockKey(goodsId, 0)))) {
@@ -119,6 +123,10 @@ public class SeckillServiceImpl implements SeckillService {
             return ApiResponse.success("秒杀成功", null);
         }
 
+        // 全部 segment 耗尽，设置售罄标记避免后续请求无效遍历
+        redisTemplate.opsForValue().set(
+                CacheConstants.soldOutKey(goodsId), "1",
+                CacheConstants.SOLDOUT_TTL_SECONDS, TimeUnit.SECONDS);
         return ApiResponse.fail(0, "库存不足");
     }
 
@@ -177,6 +185,7 @@ public class SeckillServiceImpl implements SeckillService {
                     CacheConstants.stockKey(goodsId, i),
                     String.valueOf(segStock));
         }
+        redisTemplate.delete(CacheConstants.soldOutKey(goodsId));
         log.info("库存预热分段: goodsId={} totalStock={} segments={} base={} remainder={}",
                 goodsId, goods.getStock(), CacheConstants.STOCK_SEGMENTS, base, remainder);
         bloomFilter.add(goodsId);
